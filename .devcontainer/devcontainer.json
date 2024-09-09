@@ -25,7 +25,8 @@
 			]
 		}
 	},
-	"containerEnv": {
-		"TEST_ZONE_NAME": "server.home"
-	}
+	"runArgs": [
+		"--env-file",
+		"${localWorkspaceFolder}/.devcontainer/.env"
+	]
 }
