@@ -1,0 +1,31 @@
+$TTL 1d; default TTL
+@ IN SOA ns1.server.home. kajeepan.kandeepan.gmail.com. (
+  2024082302 ; serial number
+  4H         ; refresh
+  1H         ; retry
+  7D         ; expire
+  1H         ; minimum TTL
+)
+
+; Manages by ACME-BOT. Do not edit this section.
+; ACME-BOT
+_acme-challenge.test1.server.home.    TXT "testkey1"
+_acme-challenge.test2.server.home.    TXT "testkey2"
+_acme-challenge.test3.server.home.    TXT "testkey3"
+
+; ACME-BOT-END
+
+; name servers - NS records
+@ IN NS ns1.server.home.
+
+; name servers - A records
+@                                     IN A 10.0.0.1
+any.prod.server.home                  IN A 10.0.255.1
+any.staging.server.home               IN A 10.1.255.1
+any.srv-core.server.home              IN A 10.0.4.0
+srv-core.server.home                  IN A 10.0.4.0
+srv-kasm.server.home                  IN A 10.0.4.10
+srv-rancher.server.home               IN A 10.0.2.0
+
+ns1.server.home.                      IN A 172.16.0.2
+
