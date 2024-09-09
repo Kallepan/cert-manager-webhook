@@ -1,0 +1,31 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/go
+{
+	"name": "Go",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	"image": "mcr.microsoft.com/devcontainers/go:1-1.23-bookworm",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"[go]": {
+					"editor.defaultFormatter": "golang.go",
+					"editor.formatOnSave": true,
+					"editor.insertSpaces": true,
+					"go.formatTool": "fmt",
+					"go.lintOnSave": "package",
+					"gopls": {
+						"formatting.gofumpt": true,
+						"ui.semanticTokens": true
+					}
+				}
+			},
+			"extensions": [
+				"golang.go",
+				"ms-vscode.makefile-tools"
+			]
+		}
+	},
+	"containerEnv": {
+		"TEST_ZONE_NAME": "server.home"
+	}
+}
