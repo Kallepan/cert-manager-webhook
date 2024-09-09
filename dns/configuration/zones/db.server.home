@@ -7,7 +7,7 @@ $TTL 1d; default TTL
   1H         ; minimum TTL
 )
 
-; Manages by ACME-BOT. Do not edit this section.
+; Managed by ACME-BOT. Do not edit this section.
 ; ACME-BOT
 _acme-challenge.test1.server.home.    TXT "testkey1"
 _acme-challenge.test2.server.home.    TXT "testkey2"
