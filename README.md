@@ -5,7 +5,9 @@
 This is a webhook for the cert-manager project that allows for the creation of certificates using the [ACME protocol](https://tools.ietf.org/html/rfc8555).
 
 ## Tests
-    
+
+To run the tests, execute the following command:
+
 ```bash
 $ make test
 ```
