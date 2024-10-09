@@ -8,7 +8,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -22,9 +21,21 @@ import (
 	acme "github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
 	"github.com/xanzy/go-gitlab"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+)
+
+// Define Errors
+var (
+	ErrTextRecordAlreadyExists = errors.New("txt record already exists")
+	ErrTextRecordsDoNotExist   = errors.New("txt records do not exist")
+	ErrTextRecordDoesNotExist  = errors.New("txt record does not exist")
+	ErrACMEBotContentNotFound  = errors.New("ACME-BOT comments not found")
+
+	ErrGitlabBranchNotDefined = errors.New("GITLAB_BRANCH not defined in environment variables")
+	ErrGitlabPathNotDefined   = errors.New("GITLAB_PATH not defined in environment variables")
+	ErrGitlabFileNotDefined   = errors.New("GITLAB_FILE not defined in environment variables")
+	ErrGitlabTokenNotDefined  = errors.New("GITLAB_TOKEN not defined in environment variables")
+	ErrGitlabURLNotDefined    = errors.New("GITLAB_URL not defined in environment variables")
 )
 
 var (
@@ -32,9 +43,6 @@ var (
 
 	// GroupName is the name of the group that the webhook is running in
 	GroupName = os.Getenv("GROUP_NAME")
-
-	// Namespace where the webhook is running
-	Namespace = os.Getenv("POD_NAMESPACE")
 
 	// SecretRefName is the name of the secret that contains the configuration
 	SecretRefName = os.Getenv("SECRET_REF_NAME")
@@ -155,7 +163,7 @@ func (h *gitSolver) Present(ch *acme.ChallengeRequest) error {
 
 	// If the TXT record already exists, return early
 	if _, ok := h.txtRecords[ch.ResolvedFQDN]; ok {
-		return errors.New("txt record already exists")
+		return ErrTextRecordAlreadyExists
 	}
 
 	// Read the zone file
@@ -204,7 +212,7 @@ func (h *gitSolver) CleanUp(ch *acme.ChallengeRequest) error {
 
 	// If the TXT record does not exist, return early
 	if _, ok := h.txtRecords[ch.ResolvedFQDN]; !ok {
-		return errors.New("txt record does not exist")
+		return ErrTextRecordDoesNotExist
 	}
 
 	record := NewRecord(ch.ResolvedFQDN, ch.Key)
@@ -272,25 +280,26 @@ func (h *gitSolver) extractAcmeBotContent(content string) (string, error) {
 
 	matches := re.FindStringSubmatch(content)
 	if len(matches) == 0 {
-		return "", errors.New("ACME-BOT comments not found")
+		return "", ErrACMEBotContentNotFound
 	}
 
 	return matches[1], nil
 }
 
 func (h *gitSolver) extractTxtRecords(content string) (map[string]string, error) {
+	txtRecords := make(map[string]string)
+
 	const recordPattern = `_acme-challenge\.(.*?)\s+TXT\s+"(.*?)"\n`
 	re, err := regexp.Compile(recordPattern)
 	if err != nil {
-		return nil, err
+		return txtRecords, err
 	}
 
 	submatches := re.FindAllStringSubmatch(content, -1)
 	if len(submatches) == 0 {
-		return nil, errors.New("no TXT records found")
+		return txtRecords, ErrTextRecordsDoNotExist
 	}
 
-	txtRecords := make(map[string]string)
 	for _, submatch := range submatches {
 		txtRecords[submatch[1]] = submatch[2]
 		slog.Info("found txt record", "fqdn", submatch[1], "value", submatch[2])
@@ -303,42 +312,34 @@ func (h *gitSolver) extractTxtRecords(content string) (map[string]string, error)
 func (h *gitSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
 	slog.Info("initializing git solver")
 
-	cl, err := kubernetes.NewForConfig(kubeClientConfig)
-	if err != nil {
-		return err
-	}
-
-	// Get the secret
-	sec, err := cl.CoreV1().Secrets(Namespace).Get(context.Background(), SecretRefName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
 	// Non-secret fields
-	gitBranch, ok := sec.Data["GITLAB_BRANCH"]
-	if !ok {
-		return errors.New("GITLAB_BRANCH not found in secret")
+	gitBranch := os.Getenv("GITLAB_BRANCH")
+	if gitBranch == "" {
+		return ErrGitlabBranchNotDefined
 	}
-	h.gitBranch = string(gitBranch)
-	gitPath, ok := sec.Data["GITLAB_PATH"]
-	if !ok {
-		return errors.New("GITLAB_PATH not found in secret")
+	h.gitBranch = gitBranch
+
+	gitPath := os.Getenv("GITLAB_PATH")
+	if gitPath == "" {
+		return ErrGitlabPathNotDefined
 	}
-	h.gitPath = string(gitPath)
-	gitFile, ok := sec.Data["GITLAB_FILE"]
-	if !ok {
-		return errors.New("GITLAB_FILE not found in secret")
+	h.gitPath = gitPath
+
+	gitFile := os.Getenv("GITLAB_FILE")
+	if gitFile == "" {
+		return ErrGitlabFileNotDefined
 	}
-	h.gitFile = string(gitFile)
+	h.gitFile = gitFile
 
 	// Super secret fields
-	gitlabToken, ok := sec.Data["GITLAB_TOKEN"]
-	if !ok {
-		return errors.New("GITLAB_TOKEN not found in secret")
+	gitlabToken := os.Getenv("GITLAB_TOKEN")
+	if gitlabToken == "" {
+		return ErrGitlabTokenNotDefined
 	}
-	gitlabUrl, ok := sec.Data["GITLAB_URL"]
-	if !ok {
-		return errors.New("GITLAB_URL not found in secret")
+
+	gitlabUrl := os.Getenv("GITLAB_URL")
+	if gitlabUrl == "" {
+		return ErrGitlabURLNotDefined
 	}
 
 	// Create a new git client
@@ -368,7 +369,7 @@ func (h *gitSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan stru
 	}
 
 	txtRecords, err := h.extractTxtRecords(acmeBotContent)
-	if err != nil {
+	if err != nil && err != ErrTextRecordsDoNotExist {
 		return err
 	}
 
@@ -393,26 +394,3 @@ func main() {
 	solver := New()
 	cmd.RunWebhookServer(GroupName, solver)
 }
-
-// // This is my way of doing integration tests lol
-// // Setup the environment variables and run the main function using go run .
-// func main() {
-// 	solver := New()
-// 	if err := solver.Initialize(nil, nil); err != nil {
-// 		panic(err)
-// 	}
-
-// 	// Test adding a new record
-// 	challenge := &acme.ChallengeRequest{
-// 		ResolvedFQDN: "test.example.com",
-// 		Key:          "test-key",
-// 	}
-// 	if err := solver.Present(challenge); err != nil {
-// 		panic(err)
-// 	}
-
-// 	// Test removing the record
-// 	if err := solver.CleanUp(challenge); err != nil {
-// 		panic(err)
-// 	}
-// }
