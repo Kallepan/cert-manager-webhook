@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 
@@ -23,8 +22,16 @@ func TestGitlabIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := solver.Present(challenge); err != nil && err != ErrTextRecordAlreadyExists {
+		t.Fatal(err)
+	}
+
 	// Test Removing the record
 	if err := solver.CleanUp(challenge); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := solver.CleanUp(challenge); err != nil && err != ErrTextRecordDoesNotExist {
 		t.Fatal(err)
 	}
 }
@@ -203,13 +210,13 @@ func TestExtractAcmeBotContent(t *testing.T) {
 			name:    "empty content",
 			content: "",
 			want:    "",
-			err:     errors.New("ACME-BOT comments not found"),
+			err:     ErrACMEBotContentNotFound,
 		},
 		{
 			name:    "single comment",
 			content: "no acme bot content here",
 			want:    "",
-			err:     errors.New("ACME-BOT comments not found"),
+			err:     ErrACMEBotContentNotFound,
 		},
 	}
 
@@ -260,14 +267,14 @@ func TestExtractTxtRecords(t *testing.T) {
 		{
 			name:    "no records",
 			content: "no txt records here",
-			want:    nil,
-			err:     errors.New("no TXT records found"),
+			want:    map[string]string{},
+			err:     ErrTextRecordsDoNotExist,
 		},
 		{
 			name:    "invalid format",
 			content: "_acme-challenge.example.com TXT somevalue\n",
-			want:    nil,
-			err:     errors.New("no TXT records found"),
+			want:    map[string]string{},
+			err:     ErrTextRecordsDoNotExist,
 		},
 	}
 

@@ -24,6 +24,20 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// Define Errors
+var (
+	ErrTextRecordAlreadyExists = errors.New("txt record already exists")
+	ErrTextRecordsDoNotExist   = errors.New("txt records do not exist")
+	ErrTextRecordDoesNotExist  = errors.New("txt record does not exist")
+	ErrACMEBotContentNotFound  = errors.New("ACME-BOT comments not found")
+
+	ErrGitlabBranchNotDefined = errors.New("GITLAB_BRANCH not defined in environment variables")
+	ErrGitlabPathNotDefined   = errors.New("GITLAB_PATH not defined in environment variables")
+	ErrGitlabFileNotDefined   = errors.New("GITLAB_FILE not defined in environment variables")
+	ErrGitlabTokenNotDefined  = errors.New("GITLAB_TOKEN not defined in environment variables")
+	ErrGitlabURLNotDefined    = errors.New("GITLAB_URL not defined in environment variables")
+)
+
 var (
 	timeToSleepBeforeMergeRequestCheck = 30 * time.Second
 
@@ -149,7 +163,7 @@ func (h *gitSolver) Present(ch *acme.ChallengeRequest) error {
 
 	// If the TXT record already exists, return early
 	if _, ok := h.txtRecords[ch.ResolvedFQDN]; ok {
-		return errors.New("txt record already exists")
+		return ErrTextRecordAlreadyExists
 	}
 
 	// Read the zone file
@@ -198,7 +212,7 @@ func (h *gitSolver) CleanUp(ch *acme.ChallengeRequest) error {
 
 	// If the TXT record does not exist, return early
 	if _, ok := h.txtRecords[ch.ResolvedFQDN]; !ok {
-		return errors.New("txt record does not exist")
+		return ErrTextRecordDoesNotExist
 	}
 
 	record := NewRecord(ch.ResolvedFQDN, ch.Key)
@@ -266,25 +280,26 @@ func (h *gitSolver) extractAcmeBotContent(content string) (string, error) {
 
 	matches := re.FindStringSubmatch(content)
 	if len(matches) == 0 {
-		return "", errors.New("ACME-BOT comments not found")
+		return "", ErrACMEBotContentNotFound
 	}
 
 	return matches[1], nil
 }
 
 func (h *gitSolver) extractTxtRecords(content string) (map[string]string, error) {
+	txtRecords := make(map[string]string)
+
 	const recordPattern = `_acme-challenge\.(.*?)\s+TXT\s+"(.*?)"\n`
 	re, err := regexp.Compile(recordPattern)
 	if err != nil {
-		return nil, err
+		return txtRecords, err
 	}
 
 	submatches := re.FindAllStringSubmatch(content, -1)
 	if len(submatches) == 0 {
-		return nil, errors.New("no TXT records found")
+		return txtRecords, ErrTextRecordsDoNotExist
 	}
 
-	txtRecords := make(map[string]string)
 	for _, submatch := range submatches {
 		txtRecords[submatch[1]] = submatch[2]
 		slog.Info("found txt record", "fqdn", submatch[1], "value", submatch[2])
@@ -300,31 +315,31 @@ func (h *gitSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan stru
 	// Non-secret fields
 	gitBranch := os.Getenv("GITLAB_BRANCH")
 	if gitBranch == "" {
-		return errors.New("GITLAB_BRANCH not found in environment variables")
+		return ErrGitlabBranchNotDefined
 	}
 	h.gitBranch = gitBranch
 
 	gitPath := os.Getenv("GITLAB_PATH")
 	if gitPath == "" {
-		return errors.New("GITLAB_PATH not found in environment variables")
+		return ErrGitlabPathNotDefined
 	}
 	h.gitPath = gitPath
 
 	gitFile := os.Getenv("GITLAB_FILE")
 	if gitFile == "" {
-		return errors.New("GITLAB_FILE not found in environment variables")
+		return ErrGitlabFileNotDefined
 	}
 	h.gitFile = gitFile
 
 	// Super secret fields
 	gitlabToken := os.Getenv("GITLAB_TOKEN")
 	if gitlabToken == "" {
-		return errors.New("GITLAB_TOKEN not found in environment variables")
+		return ErrGitlabTokenNotDefined
 	}
 
 	gitlabUrl := os.Getenv("GITLAB_URL")
 	if gitlabUrl == "" {
-		return errors.New("GITLAB_URL not found in environment variables")
+		return ErrGitlabURLNotDefined
 	}
 
 	// Create a new git client
@@ -354,7 +369,7 @@ func (h *gitSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan stru
 	}
 
 	txtRecords, err := h.extractTxtRecords(acmeBotContent)
-	if err != nil {
+	if err != nil && err != ErrTextRecordsDoNotExist {
 		return err
 	}
 
