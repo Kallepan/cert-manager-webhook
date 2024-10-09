@@ -8,7 +8,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -22,8 +21,6 @@ import (
 	acme "github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
 	"github.com/xanzy/go-gitlab"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
@@ -32,9 +29,6 @@ var (
 
 	// GroupName is the name of the group that the webhook is running in
 	GroupName = os.Getenv("GROUP_NAME")
-
-	// Namespace where the webhook is running
-	Namespace = os.Getenv("POD_NAMESPACE")
 
 	// SecretRefName is the name of the secret that contains the configuration
 	SecretRefName = os.Getenv("SECRET_REF_NAME")
@@ -303,42 +297,34 @@ func (h *gitSolver) extractTxtRecords(content string) (map[string]string, error)
 func (h *gitSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
 	slog.Info("initializing git solver")
 
-	cl, err := kubernetes.NewForConfig(kubeClientConfig)
-	if err != nil {
-		return err
-	}
-
-	// Get the secret
-	sec, err := cl.CoreV1().Secrets(Namespace).Get(context.Background(), SecretRefName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
 	// Non-secret fields
-	gitBranch, ok := sec.Data["GITLAB_BRANCH"]
-	if !ok {
-		return errors.New("GITLAB_BRANCH not found in secret")
+	gitBranch := os.Getenv("GITLAB_BRANCH")
+	if gitBranch == "" {
+		return errors.New("GITLAB_BRANCH not found in environment variables")
 	}
-	h.gitBranch = string(gitBranch)
-	gitPath, ok := sec.Data["GITLAB_PATH"]
-	if !ok {
-		return errors.New("GITLAB_PATH not found in secret")
+	h.gitBranch = gitBranch
+
+	gitPath := os.Getenv("GITLAB_PATH")
+	if gitPath == "" {
+		return errors.New("GITLAB_PATH not found in environment variables")
 	}
-	h.gitPath = string(gitPath)
-	gitFile, ok := sec.Data["GITLAB_FILE"]
-	if !ok {
-		return errors.New("GITLAB_FILE not found in secret")
+	h.gitPath = gitPath
+
+	gitFile := os.Getenv("GITLAB_FILE")
+	if gitFile == "" {
+		return errors.New("GITLAB_FILE not found in environment variables")
 	}
-	h.gitFile = string(gitFile)
+	h.gitFile = gitFile
 
 	// Super secret fields
-	gitlabToken, ok := sec.Data["GITLAB_TOKEN"]
-	if !ok {
-		return errors.New("GITLAB_TOKEN not found in secret")
+	gitlabToken := os.Getenv("GITLAB_TOKEN")
+	if gitlabToken == "" {
+		return errors.New("GITLAB_TOKEN not found in environment variables")
 	}
-	gitlabUrl, ok := sec.Data["GITLAB_URL"]
-	if !ok {
-		return errors.New("GITLAB_URL not found in secret")
+
+	gitlabUrl := os.Getenv("GITLAB_URL")
+	if gitlabUrl == "" {
+		return errors.New("GITLAB_URL not found in environment variables")
 	}
 
 	// Create a new git client
@@ -393,26 +379,3 @@ func main() {
 	solver := New()
 	cmd.RunWebhookServer(GroupName, solver)
 }
-
-// // This is my way of doing integration tests lol
-// // Setup the environment variables and run the main function using go run .
-// func main() {
-// 	solver := New()
-// 	if err := solver.Initialize(nil, nil); err != nil {
-// 		panic(err)
-// 	}
-
-// 	// Test adding a new record
-// 	challenge := &acme.ChallengeRequest{
-// 		ResolvedFQDN: "test.example.com",
-// 		Key:          "test-key",
-// 	}
-// 	if err := solver.Present(challenge); err != nil {
-// 		panic(err)
-// 	}
-
-// 	// Test removing the record
-// 	if err := solver.CleanUp(challenge); err != nil {
-// 		panic(err)
-// 	}
-// }

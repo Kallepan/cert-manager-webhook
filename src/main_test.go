@@ -4,7 +4,30 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	acme "github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 )
+
+func TestGitlabIntegration(t *testing.T) {
+	solver := New()
+	if err := solver.Initialize(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test Adding a new record
+	challenge := &acme.ChallengeRequest{
+		ResolvedFQDN: "test.example.com",
+		Key:          "wow-so-secret",
+	}
+	if err := solver.Present(challenge); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test Removing the record
+	if err := solver.CleanUp(challenge); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestAddTxtRecord(t *testing.T) {
 	testCases := []struct {
