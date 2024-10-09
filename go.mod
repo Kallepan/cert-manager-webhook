@@ -5,7 +5,6 @@ go 1.22.0
 require (
 	github.com/cert-manager/cert-manager v1.15.3
 	github.com/xanzy/go-gitlab v0.109.0
-	k8s.io/apimachinery v0.30.1
 	k8s.io/client-go v0.30.1
 )
 
@@ -95,6 +94,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.30.1 // indirect
 	k8s.io/apiextensions-apiserver v0.30.1 // indirect
+	k8s.io/apimachinery v0.30.1 // indirect
 	k8s.io/apiserver v0.30.1 // indirect
 	k8s.io/component-base v0.30.1 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
