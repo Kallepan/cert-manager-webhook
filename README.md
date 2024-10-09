@@ -43,3 +43,9 @@ Adjust the `values.yaml` file to match the secret name and namespace. Then, depl
 ```bash
 $ helm install git-solver-webhook ./deploy/git-solver-webhook
 ```
+`
+## Build
+
+```
+$ IMAGE_NAME=docker.io/kallepan/git-solver-webhook IMAGE_TAG=0.0.1 make build
+````
