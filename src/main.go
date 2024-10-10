@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +32,7 @@ var (
 	ErrTextRecordsDoNotExist   = errors.New("txt records do not exist")
 	ErrTextRecordDoesNotExist  = errors.New("txt record does not exist")
 	ErrACMEBotContentNotFound  = errors.New("ACME-BOT comments not found")
+	ErrSerialNumberNotFound    = errors.New("serial number not found")
 
 	ErrGitlabBranchNotDefined = errors.New("GITLAB_BRANCH not defined in environment variables")
 	ErrGitlabPathNotDefined   = errors.New("GITLAB_PATH not defined in environment variables")
@@ -180,13 +183,19 @@ func (h *gitSolver) Present(ch *acme.ChallengeRequest) error {
 	}
 
 	// Add the TXT record to the zone file
-	newContent, err := addTxtRecord(content, recordStr)
+	content, err = addTxtRecord(content, recordStr)
+	if err != nil {
+		return err
+	}
+
+	// Increase the serial number of the zone file
+	content, err = h.increaseSerialNumber(content)
 	if err != nil {
 		return err
 	}
 
 	// Update the zone file
-	if err := UpdateZoneFile(h.gitClient, h.gitBranch, h.gitPath, h.gitFile, newContent, fmt.Sprintf("Add TXT record: %s", ch.ResolvedFQDN)); err != nil {
+	if err := UpdateZoneFile(h.gitClient, h.gitBranch, h.gitPath, h.gitFile, content, fmt.Sprintf("Add TXT record: %s", ch.ResolvedFQDN)); err != nil {
 		return err
 	}
 
@@ -227,6 +236,12 @@ func (h *gitSolver) CleanUp(ch *acme.ChallengeRequest) error {
 		return err
 	}
 	content, err = removeTxtRecord(content, recordStr)
+	if err != nil {
+		return err
+	}
+
+	// Increase the serial number of the zone file
+	content, err = h.increaseSerialNumber(content)
 	if err != nil {
 		return err
 	}
@@ -306,6 +321,43 @@ func (h *gitSolver) extractTxtRecords(content string) (map[string]string, error)
 	}
 
 	return txtRecords, nil
+}
+
+/**
+ * Increase the serial number of the zone file by mutating the content.
+ */
+func (h *gitSolver) increaseSerialNumber(content string) (string, error) {
+	// Serial Number pattern: 2021091501
+	const serialNumberPattern = `(\d*)\s?;\s?serial number`
+	re, err := regexp.Compile(serialNumberPattern)
+	if err != nil {
+		return "", err
+	}
+
+	matches := re.FindStringSubmatch(content)
+	if len(matches) == 0 {
+		return "", ErrSerialNumberNotFound
+	}
+
+	// Check if the first part of the serial number is the current date
+	currentDate := time.Now().Format("20060102")
+	serialNumber := matches[1]
+	if !strings.HasPrefix(serialNumber, currentDate) {
+		// Use the currentDate to replace the tail of the serial number
+		return re.ReplaceAllString(content, fmt.Sprintf("%s01 ; serial number", currentDate)), nil
+	}
+
+	// Increment the tail of the serial number
+	tail := serialNumber[len(currentDate):]
+	convertedTail, err := strconv.Atoi(tail)
+	if err != nil {
+		return "", err
+	}
+
+	// Increment the tail of the serial number
+	convertedTail++
+
+	return re.ReplaceAllString(content, fmt.Sprintf("%s%02d ; serial number", currentDate, convertedTail)), nil
 }
 
 // Initialize will be called when the webhook first starts.

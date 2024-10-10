@@ -19,7 +19,7 @@ certManager:
 
 image:
   repository: kallepan/git-solver-webhook
-  tag: latest
+  tag: 0.0.1
   pullPolicy: IfNotPresent
 
 nameOverride: ""

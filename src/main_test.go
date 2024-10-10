@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	acme "github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 )
@@ -301,4 +303,96 @@ func TestExtractTxtRecords(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIncreaseSerialNumber(t *testing.T) {
+	currentDate := time.Now().Format("20060102")
+	testCases := []struct {
+		name    string
+		content string
+		want    string
+		err     error
+	}{
+		{
+			name:    "No space after and before serial number",
+			content: fmt.Sprintf("%s01;serial number", currentDate),
+			want:    fmt.Sprintf("%s02 ; serial number", currentDate),
+			err:     nil,
+		},
+		{
+			name:    "Space after serial number",
+			content: fmt.Sprintf("%s01; serial number", currentDate),
+			want:    fmt.Sprintf("%s02 ; serial number", currentDate),
+			err:     nil,
+		},
+		{
+			name:    "Space before serial number",
+			content: fmt.Sprintf("%s01 ;serial number", currentDate),
+			want:    fmt.Sprintf("%s02 ; serial number", currentDate),
+			err:     nil,
+		},
+		{
+			name:    "Space after and before serial number",
+			content: fmt.Sprintf("%s01 ; serial number", currentDate),
+			want:    fmt.Sprintf("%s02 ; serial number", currentDate),
+			err:     nil,
+		},
+		{
+			name:    "No serial number",
+			content: "no serial number here",
+			want:    "",
+			err:     ErrSerialNumberNotFound,
+		},
+		{
+			name: "Empty content",
+			want: "",
+			err:  ErrSerialNumberNotFound,
+		},
+		{
+			name:    "Serial Number with old date 01",
+			content: fmt.Sprintf("%s01 ; serial number", "20211001"),
+			want:    fmt.Sprintf("%s01 ; serial number", currentDate),
+		},
+		{
+			name:    "Serial Number with old date 02",
+			content: fmt.Sprintf("%s02 ; serial number", "20211001"),
+			want:    fmt.Sprintf("%s01 ; serial number", currentDate),
+		},
+		{
+			name: "Large content",
+			content: `; SOA Record
+				@ IN SOA ns1.example.com. hostmaster.example.com. (
+				2021100101 ; serial number
+				3600 ; refresh`,
+			want: fmt.Sprintf(`; SOA Record
+				@ IN SOA ns1.example.com. hostmaster.example.com. (
+				%s01 ; serial number
+				3600 ; refresh`, currentDate),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &gitSolver{}
+			got, err := h.increaseSerialNumber(tc.content)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("expected %q, got %q", tc.want, got)
+			}
+
+			if tc.err == nil && err != nil {
+				t.Errorf("expected no error, got %v", err)
+			}
+
+			if tc.err != nil {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+
+				if err.Error() != tc.err.Error() {
+					t.Errorf("expected error %q, got %q", tc.err, err)
+				}
+			}
+		})
+	}
+
 }
