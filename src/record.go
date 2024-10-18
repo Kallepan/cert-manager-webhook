@@ -9,10 +9,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"regexp"
 )
 
-const VALID_DOMAIN_REGEX = `^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$`
+const VALID_DOMAIN_REGEX = `^([_a-z0-9]+([-a-z0-9]+)*\.)+[a-z]{2,}\.?$`
 
 // Precompiled regex for domain validation
 var domainRegex = regexp.MustCompile(VALID_DOMAIN_REGEX)
@@ -24,17 +26,47 @@ type Record struct {
 
 // NewRecord creates a new Record with the provided domain and key.
 func NewRecord(domain, key string) *Record {
+	// Remove the root domain from the domain if defined
+	domain = removeRootDomain(domain, os.Getenv("ROOT_DOMAIN"))
+	domain = removeTrailingDot(domain)
+
 	return &Record{
 		Domain: domain,
 		Key:    key,
 	}
 }
 
+func removeRootDomain(domain string, rootDomain string) string {
+	if rootDomain == "" {
+		return domain
+	}
+
+	re, err := regexp.Compile(fmt.Sprintf(`%s\.?$`, rootDomain))
+	if err != nil {
+		slog.Info("Error compiling regex", "rootDomain", rootDomain, "error", err)
+		return domain
+	}
+
+	return re.ReplaceAllString(domain, "")
+}
+
+func removeTrailingDot(domain string) string {
+	if len(domain) == 0 {
+		return domain
+	}
+	if domain[len(domain)-1] == '.' {
+		return domain[:len(domain)-1]
+	}
+
+	return domain
+}
+
 func (r *Record) GenerateTextRecord() (string, error) {
 	if err := r.Validate(); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("_acme-challenge.%s.            TXT \"%s\"", r.Domain, r.Key), nil
+
+	return fmt.Sprintf("%s            TXT \"%s\"", r.Domain, r.Key), nil
 }
 
 func (r *Record) Validate() error {

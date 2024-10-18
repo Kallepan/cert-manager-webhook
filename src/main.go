@@ -1,7 +1,9 @@
 // This application requires the following environment variables to be set:
 // - GITLAB_TOKEN: The token used for authenticating with the GitLab API.
 // - GITLAB_URL: The URL of the GitLab instance.
-// - GITLAB_BRANCH: The branch in the GitLab repository to interact with.
+// - GITLAB_TARGET_BRANCH: The branch the bot will create merge requests against.
+// - GITLAB_BOT_BRANCH: The branch the bot will use to create merge requests.
+// - GITLAB_BOT_COMMENT_PREFIX: The prefix used to identify the ACME-BOT comments in the zone file.
 // - GITLAB_PATH: The path within the GitLab repository.
 // - GITLAB_FILE: The specific file within the GitLab repository.
 
@@ -31,18 +33,20 @@ var (
 	ErrTextRecordAlreadyExists = errors.New("txt record already exists")
 	ErrTextRecordsDoNotExist   = errors.New("txt records do not exist")
 	ErrTextRecordDoesNotExist  = errors.New("txt record does not exist")
-	ErrACMEBotContentNotFound  = errors.New("ACME-BOT comments not found")
+	ErrACMEBotContentNotFound  = errors.New("-ACME-BOT comments not found")
 	ErrSerialNumberNotFound    = errors.New("serial number not found")
 
-	ErrGitlabBranchNotDefined = errors.New("GITLAB_BRANCH not defined in environment variables")
-	ErrGitlabPathNotDefined   = errors.New("GITLAB_PATH not defined in environment variables")
-	ErrGitlabFileNotDefined   = errors.New("GITLAB_FILE not defined in environment variables")
-	ErrGitlabTokenNotDefined  = errors.New("GITLAB_TOKEN not defined in environment variables")
-	ErrGitlabURLNotDefined    = errors.New("GITLAB_URL not defined in environment variables")
+	ErrGitlabBotCommentPrefixNotDefined = errors.New("GITLAB_BOT_COMMENT_PREFIX not defined in environment variables")
+	ErrGitlabTargetBranchNotDefined     = errors.New("GITLAB_TARGET_BRANCH not defined in environment variables")
+	ErrGitlabBotBranchNotDefined        = errors.New("GITLAB_BOT_BRANCH not defined in environment variables")
+	ErrGitlabPathNotDefined             = errors.New("GITLAB_PATH not defined in environment variables")
+	ErrGitlabFileNotDefined             = errors.New("GITLAB_FILE not defined in environment variables")
+	ErrGitlabTokenNotDefined            = errors.New("GITLAB_TOKEN not defined in environment variables")
+	ErrGitlabURLNotDefined              = errors.New("GITLAB_URL not defined in environment variables")
 )
 
 var (
-	timeToSleepBeforeMergeRequestCheck = 30 * time.Second
+	timeToSleepBeforeMergeRequestCheck = 15 * time.Second
 
 	// GroupName is the name of the group that the webhook is running in
 	GroupName = os.Getenv("GROUP_NAME")
@@ -53,9 +57,19 @@ var (
 
 // Creates a target branch if it does not exist
 func CreateBranch(git *gitlab.Client, projectPath string, branch string, ref string) error {
+	// Check if target branch exists
+	_, _, err := git.Branches.GetBranch(projectPath, ref)
+	if err != nil {
+		slog.Error("target branch does not exist", "branch", ref)
+		return err
+	}
+
 	// Skip creating the branch if it already exists
-	_, _, err := git.Branches.GetBranch(projectPath, branch)
-	if err == nil {
+	b, _, err := git.Branches.GetBranch(projectPath, branch)
+	if err != nil && err != gitlab.ErrNotFound {
+		return err
+	}
+	if b != nil { // Branch already exists
 		slog.Info("branch already exists", "branch", branch)
 		return nil
 	}
@@ -87,8 +101,15 @@ func Merge(git *gitlab.Client, projectPath string, sourceBranch string, targetBr
 
 	slog.Info("merge request created", "id", mr.IID, "sleeping for some time before approval", timeToSleepBeforeMergeRequestCheck)
 	time.Sleep(timeToSleepBeforeMergeRequestCheck)
+	slog.Info("waking up, approving merge request", "id", mr.IID)
 
-	// Approve the merge request
+	// Auto Approve the merge request
+	_, _, err = git.MergeRequestApprovals.ApproveMergeRequest(projectPath, mr.IID, &gitlab.ApproveMergeRequestOptions{})
+	if err != nil {
+		return err
+	}
+
+	// Merge the request
 	_, _, err = git.MergeRequests.AcceptMergeRequest(projectPath, mr.IID, &gitlab.AcceptMergeRequestOptions{
 		ShouldRemoveSourceBranch: gitlab.Ptr(false), // Default should be false but just to be explicit
 	})
@@ -137,10 +158,12 @@ type gitSolver struct {
 	name       string
 	txtRecords map[string]string
 
-	gitClient *gitlab.Client
-	gitBranch string
-	gitPath   string
-	gitFile   string
+	gitClient           *gitlab.Client
+	gitBotCommentPrefix string
+	gitBotBranch        string
+	gitTargetBranch     string
+	gitPath             string
+	gitFile             string
 
 	sync.RWMutex
 }
@@ -169,11 +192,18 @@ func (h *gitSolver) Present(ch *acme.ChallengeRequest) error {
 		return ErrTextRecordAlreadyExists
 	}
 
+	// Create the branch if it does not exist
+	if err := CreateBranch(h.gitClient, h.gitPath, h.gitBotBranch, h.gitTargetBranch); err != nil {
+		return err
+	}
+
 	// Read the zone file
-	content, err := ReadZoneFile(h.gitClient, h.gitBranch, h.gitPath, h.gitFile)
+	content, err := ReadZoneFile(h.gitClient, h.gitBotBranch, h.gitPath, h.gitFile)
 	if err != nil {
 		return err
 	}
+
+	slog.Info("Received challenge request", "fqdn", ch.ResolvedFQDN)
 
 	// Append the new TXT record to the zone file
 	record := NewRecord(ch.ResolvedFQDN, ch.Key)
@@ -183,7 +213,7 @@ func (h *gitSolver) Present(ch *acme.ChallengeRequest) error {
 	}
 
 	// Add the TXT record to the zone file
-	content, err = addTxtRecord(content, recordStr)
+	content, err = addTxtRecord(content, recordStr, h.gitBotCommentPrefix)
 	if err != nil {
 		return err
 	}
@@ -195,17 +225,20 @@ func (h *gitSolver) Present(ch *acme.ChallengeRequest) error {
 	}
 
 	// Update the zone file
-	if err := UpdateZoneFile(h.gitClient, h.gitBranch, h.gitPath, h.gitFile, content, fmt.Sprintf("Add TXT record: %s", ch.ResolvedFQDN)); err != nil {
+	if err := UpdateZoneFile(h.gitClient, h.gitBotBranch, h.gitPath, h.gitFile, content, fmt.Sprintf("Add TXT record: %s", ch.ResolvedFQDN)); err != nil {
 		return err
 	}
 
 	// Create a merge request
-	if err := Merge(h.gitClient, h.gitPath, h.gitBranch, "main", "Add TXT record", "Add TXT record"); err != nil {
+	if err := Merge(h.gitClient, h.gitPath, h.gitBotBranch, h.gitTargetBranch, "Add TXT record", "Add TXT record"); err != nil {
 		return err
 	}
 
 	// Store the TXT record in memory
 	h.txtRecords[ch.ResolvedFQDN] = ch.Key
+
+	slog.Info("Challenge request completed", "fqdn", ch.ResolvedFQDN)
+
 	return nil
 }
 
@@ -224,6 +257,12 @@ func (h *gitSolver) CleanUp(ch *acme.ChallengeRequest) error {
 		return ErrTextRecordDoesNotExist
 	}
 
+	// Create the branch if it does not exist
+	if err := CreateBranch(h.gitClient, h.gitPath, h.gitBotBranch, h.gitTargetBranch); err != nil {
+		return err
+	}
+
+	slog.Info("Cleaning up challenge request", "fqdn", ch.ResolvedFQDN)
 	record := NewRecord(ch.ResolvedFQDN, ch.Key)
 	recordStr, err := record.GenerateTextRecord()
 	if err != nil {
@@ -231,7 +270,7 @@ func (h *gitSolver) CleanUp(ch *acme.ChallengeRequest) error {
 	}
 
 	// Remove the TXT record from the zone file
-	content, err := ReadZoneFile(h.gitClient, h.gitBranch, h.gitPath, h.gitFile)
+	content, err := ReadZoneFile(h.gitClient, h.gitBotBranch, h.gitPath, h.gitFile)
 	if err != nil {
 		return err
 	}
@@ -247,30 +286,32 @@ func (h *gitSolver) CleanUp(ch *acme.ChallengeRequest) error {
 	}
 
 	// Update the zone file
-	if err := UpdateZoneFile(h.gitClient, h.gitBranch, h.gitPath, h.gitFile, content, fmt.Sprintf("Remove TXT record: %s", ch.ResolvedFQDN)); err != nil {
+	if err := UpdateZoneFile(h.gitClient, h.gitBotBranch, h.gitPath, h.gitFile, content, fmt.Sprintf("Remove TXT record: %s", ch.ResolvedFQDN)); err != nil {
 		return err
 	}
 
 	// Create a merge request
-	if err := Merge(h.gitClient, h.gitPath, h.gitBranch, "main", "Remove TXT record", "Remove TXT record"); err != nil {
+	if err := Merge(h.gitClient, h.gitPath, h.gitBotBranch, h.gitTargetBranch, "Remove TXT record", "Remove TXT record"); err != nil {
 		return err
 	}
 
 	// Finally, remove the TXT record from memory
 	delete(h.txtRecords, ch.ResolvedFQDN)
 
+	slog.Info("Challenge request cleaned up", "fqdn", ch.ResolvedFQDN)
+
 	return nil
 }
 
 // addTxtRecord adds a new TXT record string to the given content and returns the updated content.
-func addTxtRecord(content string, recordStr string) (string, error) {
-	reToCompile := `; ACME-BOT-END`
+func addTxtRecord(content string, recordStr string, prefix string) (string, error) {
+	reToCompile := fmt.Sprintf(`; %s-ACME-BOT-END`, prefix)
 	re, err := regexp.Compile(reToCompile)
 	if err != nil {
 		return "", err
 	}
 
-	newText := fmt.Sprintf("%s\n; ACME-BOT-END", recordStr)
+	newText := fmt.Sprintf("%s\n; %s-ACME-BOT-END", recordStr, prefix)
 	return re.ReplaceAllString(content, newText), nil
 }
 
@@ -287,7 +328,8 @@ func removeTxtRecord(content string, recordStr string) (string, error) {
 }
 
 func (h *gitSolver) extractAcmeBotContent(content string) (string, error) {
-	const acmeBotCommentPattern = `; ACME-BOT\n([\s\S]*?); ACME-BOT-END`
+	slog.Info(fmt.Sprintf("extracting acme bot content using %s-ACME-BOT", h.gitBotCommentPrefix))
+	acmeBotCommentPattern := fmt.Sprintf(`; %s-ACME-BOT\n([\s\S]*?); %s-ACME-BOT-END`, h.gitBotCommentPrefix, h.gitBotCommentPrefix)
 	re, err := regexp.Compile(acmeBotCommentPattern)
 	if err != nil {
 		return "", err
@@ -304,7 +346,7 @@ func (h *gitSolver) extractAcmeBotContent(content string) (string, error) {
 func (h *gitSolver) extractTxtRecords(content string) (map[string]string, error) {
 	txtRecords := make(map[string]string)
 
-	const recordPattern = `_acme-challenge\.(.*?)\s+TXT\s+"(.*?)"\n`
+	const recordPattern = `(_acme-challenge\..*?)\s+TXT\s+"(.*?)"\n`
 	re, err := regexp.Compile(recordPattern)
 	if err != nil {
 		return txtRecords, err
@@ -316,8 +358,16 @@ func (h *gitSolver) extractTxtRecords(content string) (map[string]string, error)
 	}
 
 	for _, submatch := range submatches {
-		txtRecords[submatch[1]] = submatch[2]
-		slog.Info("found txt record", "fqdn", submatch[1], "value", submatch[2])
+		domain := submatch[1]
+		key := submatch[2]
+		if os.Getenv("ROOT_DOMAIN") != "" {
+			domain = fmt.Sprintf("%s.%s.", domain, os.Getenv("ROOT_DOMAIN"))
+		} else {
+			domain = fmt.Sprintf("%s.", domain)
+		}
+
+		txtRecords[domain] = key
+		slog.Info("found txt record", "fqdn", domain, "value", key)
 	}
 
 	return txtRecords, nil
@@ -357,6 +407,11 @@ func (h *gitSolver) increaseSerialNumber(content string) (string, error) {
 	// Increment the tail of the serial number
 	convertedTail++
 
+	// Convert Tail to 00 if larger than 99
+	if convertedTail > 99 {
+		convertedTail = 0
+	}
+
 	return re.ReplaceAllString(content, fmt.Sprintf("%s%02d ; serial number", currentDate, convertedTail)), nil
 }
 
@@ -365,11 +420,23 @@ func (h *gitSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan stru
 	slog.Info("initializing git solver")
 
 	// Non-secret fields
-	gitBranch := os.Getenv("GITLAB_BRANCH")
-	if gitBranch == "" {
-		return ErrGitlabBranchNotDefined
+	gitBotBranch := os.Getenv("GITLAB_BOT_BRANCH")
+	if gitBotBranch == "" {
+		return ErrGitlabBotBranchNotDefined
 	}
-	h.gitBranch = gitBranch
+	h.gitBotBranch = gitBotBranch
+
+	gitBotCommentPrefix := os.Getenv("GITLAB_BOT_COMMENT_PREFIX")
+	if gitBotCommentPrefix == "" {
+		return ErrGitlabBotCommentPrefixNotDefined
+	}
+	h.gitBotCommentPrefix = gitBotCommentPrefix
+
+	gitTargetBranch := os.Getenv("GITLAB_TARGET_BRANCH")
+	if gitTargetBranch == "" {
+		return ErrGitlabTargetBranchNotDefined
+	}
+	h.gitTargetBranch = gitTargetBranch
 
 	gitPath := os.Getenv("GITLAB_PATH")
 	if gitPath == "" {
@@ -399,22 +466,21 @@ func (h *gitSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan stru
 	if err != nil {
 		return err
 	}
-
 	h.gitClient = c
 
 	// Create the branch if it does not exist
-	if err := CreateBranch(h.gitClient, h.gitPath, h.gitBranch, "main"); err != nil {
+	if err := CreateBranch(h.gitClient, h.gitPath, h.gitBotBranch, h.gitTargetBranch); err != nil {
 		return err
 	}
 
-	// Read the zone file to check if the ACME-BOT comments are present
+	// Read the zone file to check if the -ACME-BOT comments are present
 	// Returns base64 encoded content
-	content, err := ReadZoneFile(h.gitClient, h.gitBranch, h.gitPath, h.gitFile)
+	content, err := ReadZoneFile(h.gitClient, h.gitBotBranch, h.gitPath, h.gitFile)
 	if err != nil {
 		return err
 	}
 
-	// Extract the ACME-BOT comments from the zone file
+	// Extract the -ACME-BOT comments from the zone file
 	acmeBotContent, err := h.extractAcmeBotContent(content)
 	if err != nil {
 		return err

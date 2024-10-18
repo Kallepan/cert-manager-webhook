@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -55,30 +56,30 @@ func TestAddTxtRecord(t *testing.T) {
 		},
 		{
 			name:      "single record",
-			content:   "; ACME-BOT\nsome content\n; ACME-BOT-END",
+			content:   "; TEST-ACME-BOT\nsome content\n; TEST-ACME-BOT-END",
 			recordStr: "_acme-challenge.example.com TXT \"somevalue\"",
-			want:      "; ACME-BOT\nsome content\n_acme-challenge.example.com TXT \"somevalue\"\n; ACME-BOT-END",
+			want:      "; TEST-ACME-BOT\nsome content\n_acme-challenge.example.com TXT \"somevalue\"\n; TEST-ACME-BOT-END",
 			err:       nil,
 		},
 		{
 			name:      "no opening comment",
 			content:   "some content\n; ACME-BOT-END",
 			recordStr: "_acme-challenge.example.com TXT \"somevalue\"",
-			want:      "some content\n_acme-challenge.example.com TXT \"somevalue\"\n; ACME-BOT-END",
+			want:      "some content\n; ACME-BOT-END",
 			err:       nil,
 		},
 		{
 			name:      "surrounding text",
-			content:   "text-before; ACME-BOT\nsome content\n; ACME-BOT-ENDtext-text-after",
+			content:   "text-before; TEST-ACME-BOT\nsome content\n; TEST-ACME-BOT-ENDtext-text-after",
 			recordStr: "_acme-challenge.example.com TXT \"somevalue\"",
-			want:      "text-before; ACME-BOT\nsome content\n_acme-challenge.example.com TXT \"somevalue\"\n; ACME-BOT-ENDtext-text-after",
+			want:      "text-before; TEST-ACME-BOT\nsome content\n_acme-challenge.example.com TXT \"somevalue\"\n; TEST-ACME-BOT-ENDtext-text-after",
 			err:       nil,
 		},
 		{
 			name:      "trailing newline",
-			content:   "; ACME-BOT\nsome content\n; ACME-BOT-END\n",
+			content:   "; TEST-ACME-BOT\nsome content\n; TEST-ACME-BOT-END\n",
 			recordStr: "_acme-challenge.example.com TXT \"somevalue\"",
-			want:      "; ACME-BOT\nsome content\n_acme-challenge.example.com TXT \"somevalue\"\n; ACME-BOT-END\n",
+			want:      "; TEST-ACME-BOT\nsome content\n_acme-challenge.example.com TXT \"somevalue\"\n; TEST-ACME-BOT-END\n",
 			err:       nil,
 		},
 		{
@@ -92,7 +93,7 @@ func TestAddTxtRecord(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual, err := addTxtRecord(tc.content, tc.recordStr)
+			actual, err := addTxtRecord(tc.content, tc.recordStr, "TEST")
 			if !reflect.DeepEqual(actual, tc.want) {
 				t.Errorf("expected %q, got %q", tc.want, actual)
 			}
@@ -192,19 +193,19 @@ func TestExtractAcmeBotContent(t *testing.T) {
 	}{
 		{
 			name:    "valid content with text",
-			content: "; ACME-BOT\nsome content\n; ACME-BOT-END",
+			content: "; TEST-ACME-BOT\nsome content\n; TEST-ACME-BOT-END",
 			want:    "some content\n",
 			err:     nil,
 		},
 		{
 			name:    "valid content with another text",
-			content: "; ACME-BOT\nanother content\n; ACME-BOT-END",
+			content: "; TEST-ACME-BOT\nanother content\n; TEST-ACME-BOT-END",
 			want:    "another content\n",
 			err:     nil,
 		},
 		{
 			name:    "valid content with multiple texts",
-			content: "; ACME-BOT\nanother content\nblah\nblahhhshhh\n; ACME-BOT-END",
+			content: "; TEST-ACME-BOT\nanother content\nblah\nblahhhshhh\n; TEST-ACME-BOT-END",
 			want:    "another content\nblah\nblahhhshhh\n",
 			err:     nil,
 		},
@@ -224,7 +225,10 @@ func TestExtractAcmeBotContent(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := &gitSolver{}
+			h := &gitSolver{
+				// Set the prefix to TEST to match the test cases
+				gitBotCommentPrefix: "TEST",
+			}
 			got, err := h.extractAcmeBotContent(tc.content)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("expected %q, got %q", tc.want, got)
@@ -249,21 +253,36 @@ func TestExtractAcmeBotContent(t *testing.T) {
 
 func TestExtractTxtRecords(t *testing.T) {
 	testCases := []struct {
-		name    string
-		content string
-		want    map[string]string
-		err     error
+		name       string
+		content    string
+		want       map[string]string
+		err        error
+		rootDomain string
 	}{
+		{
+			name:       "with root domain",
+			content:    "_acme-challenge.svc TXT \"somevalue\"\n",
+			want:       map[string]string{"_acme-challenge.svc.example.com.": "somevalue"},
+			err:        nil,
+			rootDomain: "example.com",
+		},
+		{
+			name:       "with root domain. multiple records",
+			content:    "_acme-challenge.svc TXT \"somevalue\"\n_acme-challenge.svc2 TXT \"anothervalue\"\n",
+			want:       map[string]string{"_acme-challenge.svc.example.com.": "somevalue", "_acme-challenge.svc2.example.com.": "anothervalue"},
+			err:        nil,
+			rootDomain: "example.com",
+		},
 		{
 			name:    "valid single record",
 			content: "_acme-challenge.example.com TXT \"somevalue\"\n",
-			want:    map[string]string{"example.com": "somevalue"},
+			want:    map[string]string{"_acme-challenge.example.com.": "somevalue"},
 			err:     nil,
 		},
 		{
 			name:    "valid multiple records",
 			content: "_acme-challenge.example.com TXT \"somevalue\"\n_acme-challenge.test.com TXT \"anothervalue\"\n",
-			want:    map[string]string{"example.com": "somevalue", "test.com": "anothervalue"},
+			want:    map[string]string{"_acme-challenge.example.com.": "somevalue", "_acme-challenge.test.com.": "anothervalue"},
 			err:     nil,
 		},
 		{
@@ -282,6 +301,11 @@ func TestExtractTxtRecords(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.rootDomain != "" {
+				os.Setenv("ROOT_DOMAIN", tc.rootDomain)
+				defer os.Unsetenv("ROOT_DOMAIN")
+			}
+
 			h := &gitSolver{}
 			got, err := h.extractTxtRecords(tc.content)
 			if !reflect.DeepEqual(got, tc.want) {
@@ -357,6 +381,11 @@ func TestIncreaseSerialNumber(t *testing.T) {
 			name:    "Serial Number with old date 02",
 			content: fmt.Sprintf("%s02 ; serial number", "20211001"),
 			want:    fmt.Sprintf("%s01 ; serial number", currentDate),
+		},
+		{
+			name:    "Serial Number ends with 99",
+			content: fmt.Sprintf("%s99 ; serial number", currentDate),
+			want:    fmt.Sprintf("%s00 ; serial number", currentDate),
 		},
 		{
 			name: "Large content",

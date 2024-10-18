@@ -25,6 +25,7 @@
 			]
 		}
 	},
+	"postCreateCommand": "go mod tidy",
 	"runArgs": [
 		"--env-file",
 		"${localWorkspaceFolder}/.devcontainer/.env"
@@ -32,6 +33,5 @@
 	"features": {
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
 		"ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {}
-	},
-	"postCreateCommand": "bash .devcontainer/post-create.sh"
+	}
 }

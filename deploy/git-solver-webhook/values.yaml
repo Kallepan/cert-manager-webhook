@@ -8,9 +8,14 @@
 # here is recommended.
 groupName: acme.server.home
 
+# If your zone file is managed by a DNS provider that appends a domain to the
+# end of your records, you can specify the root domain here. This will be removed
+# from the DNS01 challenge record before it is created.
+rootDomain: server.home
+
 # The name of the secret that must be created in the same namespace as the
 # cert-manager webhook service account.
-secretRefName: git-solver-webhook-config
+secretRefName: git-solver-webhook-secret
 
 certManager:
   namespace: cert-manager
@@ -18,9 +23,10 @@ certManager:
 
 
 image:
-  repository: kallepan/git-solver-webhook
+  repository: registry.srv-lab.server.home/homelab/iac/cert-manager-webhook
   tag: 0.0.1
   pullPolicy: IfNotPresent
+  pullSecret: cert-manager-webhook-pull-secret
 
 nameOverride: ""
 fullnameOverride: ""
