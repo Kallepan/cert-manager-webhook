@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 golang:1.22-alpine3.19 AS build_deps
+FROM golang:1.22-alpine3.19 AS build_deps
 
 RUN apk add --no-cache git
 
