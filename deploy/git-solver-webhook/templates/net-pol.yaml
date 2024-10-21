@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "example-webhook.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  # Only allow traffic from inside the cert-manager namespace
+  ingress:
+    - from:
+        - podSelector: {}
+  # Apply this policy to pods with label app=example-webhook
+  podSelector:
+    matchLabels:
+      app: {{ include "example-webhook.name" . }}
+  policyTypes:
+    - Ingress
